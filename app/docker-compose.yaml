@@ -1,0 +1,126 @@
+services:
+  # Database Service
+  mariadb:
+    image: mariadb:latest
+    container_name: mariadb
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: sic
+      MYSQL_DATABASE: sic
+      MYSQL_USER: sic
+      MYSQL_PASSWORD: sic
+    ports:
+      - "3306:3306"
+    volumes:
+      - mariadb-data:/var/lib/mysql
+    networks:
+      - database-network
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Database GUI
+  phpmyadmin:
+    image: phpmyadmin:latest
+    container_name: phpmyadmin
+    restart: always
+    environment:
+      PMA_HOST: mariadb
+      PMA_USER: sic
+      PMA_PASSWORD: sic
+    ports:
+      - "8080:80"
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    networks:
+      - database-network
+
+  # Message Broker Service
+  rabbitmq:
+    build: ./rabbitmq
+    container_name: rabbitmq
+    restart: always
+    ports:
+      - "1883:1883"
+      - "15672:15672"
+    networks:
+      - broker-network
+    healthcheck:
+      test: ["CMD", "rabbitmqctl", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # IoT Metric Simulator 01 (Publisher)
+  metric-simulator-01:
+    build: ./metric-simulator-01/
+    container_name: metric-simulator-01
+    environment:
+      NUM_MESSAGES: 60
+      N_TEMP_HIGH: 40.0
+      N_TEMP_LOW: 10.0
+      A_TEMP_HIGH: 40.1
+      A_TEMP_LOW: 9.9
+      A_PROBA: 0.5
+    restart: always
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - broker-network
+
+  # Metric Processor (Subscriber/Publisher)
+  metric-processor:
+    build: ./metric-processor
+    container_name: metric-processor
+    restart: always
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      MARIADB_HOST: mariadb
+      MARIADB_USER: sic
+      MARIADB_PASSWORD: sic
+      MARIADB_DATABASE: sic
+      MQTT_BROKER_HOST: rabbitmq
+      TEMP_HTHRESHOLD: 40.0
+      TEMP_LTHRESHOLD: 10.0
+    networks:
+      - database-network
+      - broker-network
+
+  # Alert Logger (Subscriber)
+  alert-logger:
+    build: ./alert-logger
+    container_name: alert-logger
+    restart: always
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      MARIADB_HOST: mariadb
+      MARIADB_USER: sic
+      MARIADB_PASSWORD: sic
+      MARIADB_DATABASE: sic
+      MQTT_BROKER: rabbitmq
+    networks:
+      - database-network
+      - broker-network
+
+volumes:
+  mariadb-data:
+    driver: local
+
+networks:
+  broker-network:
+    driver: bridge
+  database-network:
+    driver: bridge
+
